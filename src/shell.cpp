@@ -5,10 +5,12 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <signal.h>
+
 
 namespace {
     // Private anonymous namespace, restricted to shell.cpp
-    
+
     std:: vector<std::string> split(const std::string& line){
 
         // istringstream treats the string as a stream interface,
@@ -26,6 +28,11 @@ namespace {
 }
 
 void Shell::run() {
+    
+    // Ignore interactive signals in the shell
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+
     while(true) {
         print_prompt();
 
@@ -63,7 +70,12 @@ void Shell::execute_line(const std::string &line) {
     pid_t pid = fork();
 
     if (pid == 0) {
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+
+        // If execvp succeeds, child terminates then and there, thus exit not called
         execvp(argv[0], argv.data());
+        
         // system calls donot throw exceptions, thus perror() captures the errno
         // and prints a human-readable message
         perror("execvp");
