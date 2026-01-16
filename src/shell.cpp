@@ -7,11 +7,17 @@
 #include <sys/wait.h>
 
 namespace {
+    // Private anonymous namespace, restricted to shell.cpp
+    
     std:: vector<std::string> split(const std::string& line){
+
+        // istringstream treats the string as a stream interface,
+        // thus we can treat it as a stream and use the cin >> x -> iss >> x;
         std::istringstream iss(line);
         std::vector<std::string> tokens;
         std::string token;
 
+        // thus we are extracting tokens while minimizing overhead and bugs
         while (iss >> token)
             tokens.push_back(token);
         
@@ -58,7 +64,12 @@ void Shell::execute_line(const std::string &line) {
 
     if (pid == 0) {
         execvp(argv[0], argv.data());
+        // system calls donot throw exceptions, thus perror() captures the errno
+        // and prints a human-readable message
         perror("execvp");
+        // _empty() performs kernel level exit without flushing buffers, destructor calls
+        // doesn't call atexit() handler
+        // Parent and Child share buffer, thus exit() can cause flush twice
         _exit(1);
     }
     else if(pid > 0) {
