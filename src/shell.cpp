@@ -6,11 +6,14 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <limits.h>
+
+
+// 18/01/2026 : Implement Built-In Commands
 
 
 namespace {
     // Private anonymous namespace, restricted to shell.cpp
-
     std:: vector<std::string> split(const std::string& line){
 
         // istringstream treats the string as a stream interface,
@@ -60,6 +63,29 @@ void Shell::execute_line(const std::string &line) {
     auto tokens = split(line);
     if (tokens.empty())
         return;
+    
+    if (tokens[0] == "cd") {
+        const char * path = 
+            (tokens.size() > 1) ? tokens[1].c_str() : getenv("HOME");
+        
+        if (chdir(path) != 0) {
+            perror("cd");
+        }
+
+        return;
+    }
+    
+    if (tokens[0] == "pwd") {
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd))) {
+            std::cout << cwd << std::endl;
+        }
+        else {
+            perror("pwd");
+        }
+
+        return;
+    }
     
     std::vector<char*> argv;
     for (auto& s : tokens)
