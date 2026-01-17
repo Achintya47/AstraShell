@@ -7,11 +7,13 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <limits.h>
+#include <errno.h>
 
 
 // 18/01/2026 : Implement Built-In Commands
 //              Background processes '&'
-//
+//              Background process completion and handling
+//              
 
 
 namespace {
@@ -32,11 +34,54 @@ namespace {
     }
 }
 
+/**
+ * @brief Why are we reaping or handling the forked children?
+ * We're in a way collecting the death certificates of the dead
+ * children processes, in order for our system to re-allocate the pid's.
+ * Too many zombie processes : fork() starts failing, reap == cleanup
+ * 
+ * But they say, "Signal handlers are restricted", why so?
+ * Because a signal handler can interrupt your program at any instruction
+ * ANYWHERE!, halfway through malloc, writing to cout, inside new anything
+ * Thus non-re-entrant functions, will be corrupted.
+ * 
+ * Malloc is allocating, handler allocates memory and malloc runs again while already
+ * allocating : heap corrpution
+ * 
+ * cout uses internal buffers and locks, an interrupt could cause corrupted output, 
+ * a potential DEADLOCK.
+ * Scary stuff mate!!
+ * 
+ * Why waitpid is allowed? POSIX gurantees that waitpid() is async-signal-safe
+ * 
+ */
+void sigchld_handler(int) {
+
+    // Do nothing as of now
+    
+    // // Save errno, to restore later
+    // int saved_errno = errno;
+
+    // // We loop to reap all finished children
+    // while(true) {
+    //     // Wiat for any child, WNOHANG -> Donot block
+    //     // >0 Reaped one child, 0 No child ready, -1 no child exists
+    //     pid_t pid = waitpid(-1, nullptr, WNOHANG);
+    //     if (pid <= 0){
+    //         break;
+    //     }
+    // }
+    // // restore later
+    // errno = saved_errno;
+}
+
 void Shell::run() {
     
     // Ignore interactive signals in the shell
     signal(SIGINT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
+
+    signal(SIGCHLD, sigchld_handler);
 
     while(true) {
         print_prompt();
@@ -48,6 +93,7 @@ void Shell::run() {
             break;
         
         execute_line(line);
+        check_background_jobs();
     }
 }
 
@@ -104,6 +150,17 @@ void Shell::execute_line(const std::string &line) {
     
     argv.push_back(nullptr);
 
+    if (tokens[0] == "jobs") {
+        for (const auto& job : jobs_) {
+            std::cout << "[" << job.job_id << "] "
+                << "Running "
+                << job.command << std::endl;
+        }
+        return; 
+    }
+
+
+    
     pid_t pid = fork();
 
     if (pid == 0) {
@@ -125,14 +182,33 @@ void Shell::execute_line(const std::string &line) {
     else if(pid > 0) {
         // If parent process and the job is a background process
         if (background) {
-            static int job_id = 1;
-            std::cout << "[" << job_id++ << "] " << pid << std::endl;
+            jobs_.push_back(Job{
+                next_job_id_++,
+                pid,
+                line
+            });
+
+            std::cout << "[" << jobs_.back().job_id << "] " << pid << std::endl;
         }
         else{
-        waitpid(pid, nullptr, 0);
+            waitpid(pid, nullptr, 0);
         }
     }
     else{
         perror("fork");
     }
 } 
+
+void Shell::check_background_jobs() {
+    for (auto it = jobs_.begin(); it != jobs_.end(); ) {
+        pid_t pid = waitpid(it->pid, nullptr, WNOHANG);
+
+        if (pid > 0) {
+            std::cout << "[" << it->job_id << "] Done  "
+                      << it->command << std::endl;
+            it = jobs_.erase(it);
+        } 
+        else
+            ++it;
+    }
+}
