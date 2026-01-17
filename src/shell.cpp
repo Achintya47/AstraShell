@@ -10,6 +10,8 @@
 
 
 // 18/01/2026 : Implement Built-In Commands
+//              Background processes '&'
+//
 
 
 namespace {
@@ -64,6 +66,15 @@ void Shell::execute_line(const std::string &line) {
     if (tokens.empty())
         return;
     
+    bool background = false;
+
+    if (tokens.back() == "&") {
+        background = true;
+        tokens.pop_back(); // remove '&'
+    }
+    
+    /* BUILT INS */
+    // Checking for Built-In commands to avoid fork
     if (tokens[0] == "cd") {
         const char * path = 
             (tokens.size() > 1) ? tokens[1].c_str() : getenv("HOME");
@@ -86,7 +97,7 @@ void Shell::execute_line(const std::string &line) {
 
         return;
     }
-    
+
     std::vector<char*> argv;
     for (auto& s : tokens)
         argv.push_back(const_cast<char*>(s.c_str()));
@@ -110,8 +121,16 @@ void Shell::execute_line(const std::string &line) {
         // Parent and Child share buffer, thus exit() can cause flush twice
         _exit(1);
     }
+
     else if(pid > 0) {
+        // If parent process and the job is a background process
+        if (background) {
+            static int job_id = 1;
+            std::cout << "[" << job_id++ << "] " << pid << std::endl;
+        }
+        else{
         waitpid(pid, nullptr, 0);
+        }
     }
     else{
         perror("fork");
