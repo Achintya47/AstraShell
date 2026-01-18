@@ -13,7 +13,9 @@
 // 18/01/2026 : Implement Built-In Commands
 //              Background processes '&'
 //              Background process completion and handling
-//              
+
+// 19/01/2026 : Process Groups, Ctrl + Z, fg, bg, and terminal control
+
 
 
 namespace {
@@ -58,7 +60,7 @@ namespace {
 void sigchld_handler(int) {
 
     // Do nothing as of now
-    
+
     // // Save errno, to restore later
     // int saved_errno = errno;
 
@@ -76,7 +78,13 @@ void sigchld_handler(int) {
 }
 
 void Shell::run() {
+
+    // Shell must be its own Process Group
+    pid_t shell_pgid = getpid();
     
+    setpgid(shell_pgid, shell_pgid);
+    tcsetpgrp(STDIN_FILENO, shell_pgid);
+
     // Ignore interactive signals in the shell
     signal(SIGINT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
@@ -144,6 +152,24 @@ void Shell::execute_line(const std::string &line) {
         return;
     }
 
+    if (tokens[0] == "fg") {
+        int job_id = std::stoi(tokens[1].substr(1));
+
+        for (auto& job : jobs_) {
+            if (job.job_id == job_id) {
+                tcsetpgrp(STDIN_FILENO, job.pgid);
+                kill(-job.pgid, SIGCONT);
+
+                int status;
+                waitpid(-job.pgid, &status, WUNTRACED);
+
+                tcsetpgrp(STDIN_FILENO, shell_pgid);
+
+            }
+        }
+
+
+    }
     std::vector<char*> argv;
     for (auto& s : tokens)
         argv.push_back(const_cast<char*>(s.c_str()));
@@ -164,8 +190,11 @@ void Shell::execute_line(const std::string &line) {
     pid_t pid = fork();
 
     if (pid == 0) {
+        setpgid(0, 0);
+
         signal(SIGINT, SIG_DFL);
         signal(SIGTSTP, SIG_DFL);
+        signal(SIGCONT, SIG_DFL);
 
         // If execvp succeeds, child terminates then and there, thus exit not called
         execvp(argv[0], argv.data());
@@ -180,20 +209,44 @@ void Shell::execute_line(const std::string &line) {
     }
 
     else if(pid > 0) {
+
+        setpgid(pid, pid);
+
         // If parent process and the job is a background process
         if (background) {
             jobs_.push_back(Job{
                 next_job_id_++,
                 pid,
-                line
+                line,
+                JobState::Running
             });
 
             std::cout << "[" << jobs_.back().job_id << "] " << pid << std::endl;
         }
         else{
+
+            tcsetpgrp(STDIN_FILENO, pid);
+
+            int status;
+            waitpid(-pid, &status, WUNTRACED);
+
+            tcsetpgrp(STDIN_FILENO, shell_pgid);
+
+            if (WIFSTOPPED(status)) {
+                jobs_.push_back(Job{
+                    next_job_id_++,
+                    pid,
+                    line,
+                    JobState::Stopped
+                });
+                std::cout << "[" << jobs_.back().job_id
+                    << "] Stopped " << line << std::endl;
+            }
+            // Wait for entire process group
             waitpid(pid, nullptr, 0);
         }
     }
+
     else{
         perror("fork");
     }
