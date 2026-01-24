@@ -15,7 +15,37 @@
 //              Background process completion and handling
 
 // 19/01/2026 : Process Groups, Ctrl + Z, fg, bg, and terminal control
+// 24/01/2026 : Background process + Bug-Fixes
+//            : Pipelines
 
+
+/*
+["ls","|","grep","cpp","|","wc","-l"]
+Becomes
+[
+  ["ls"],
+  ["grep","cpp"],
+  ["wc","-l"]
+]
+*/
+static std::vector<std::vector<std::string>> split_pipeline(
+    const std::vector<std::string>& tokens){
+        
+        std::vector<std::vector<std::string>> cmds;
+        std::vector<std::string> current;
+
+        for (const auto& t : tokens) {
+            if (t == "|") {
+                cmds.push_back(current);
+                current.clear();
+            }
+            else {
+                current.push_back(t);
+            }
+        }
+        cmds.push_back(current);
+        return cmds;
+}
 
 
 namespace {
@@ -100,8 +130,14 @@ void Shell::run() {
     tcsetpgrp(STDIN_FILENO, shell_pgid);
 
     // Ignore these for job control
+    // Triggered when a background process tries to write to the terminal
+    // Ignored, background processes can write to the terminal without being suspended
     signal(SIGTTOU, SIG_IGN);
+    // Triggered when a background process tries to read from the terminal
+    // Ignored, background processes won't be suspended when attempt to read
     signal(SIGTTIN, SIG_IGN);
+    // Triggered when the user presses Ctrl + Z, in the terminal
+    // Ignored, prevents user from suspending background processes
     signal(SIGTSTP, SIG_IGN);
 
     // Ignore interactive signals in the shell
@@ -133,6 +169,97 @@ std::string Shell::read_line() const {
     std::getline(std::cin, line);
     return line;
 }
+
+std::string join_tokens(const std::vector<std::string>& tokens) {
+    std::string result;
+
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        result += tokens[i];
+        if (i + 1 < tokens.size())
+            result += " ";
+    }
+
+    return result;
+}
+
+void Shell::execute_pipeline(const std::vector<std::string>& tokens,
+                             bool background) {
+    auto cmds = split_pipeline(tokens);
+    int n = cmds.size();
+
+    std::vector<int> pipefds(2 * (n - 1));
+    for (int i = 0; i < n - 1; ++i)
+        pipe(&pipefds[2*i]);
+
+    pid_t pgid = 0;
+
+    for (int i = 0; i < n; ++i) {
+        pid_t pid = fork();
+
+        if (pid == 0) {
+            // Child
+            if (i == 0)
+                setpgid(0, 0);
+            else
+                setpgid(0, pgid);
+
+            // stdin
+            if (i > 0) {
+                dup2(pipefds[2*(i-1)], STDIN_FILENO);
+            }
+
+            // stdout
+            if (i < n - 1) {
+                dup2(pipefds[2*i + 1], STDOUT_FILENO);
+            }
+
+            for (int fd : pipefds)
+                close(fd);
+
+            signal(SIGINT, SIG_DFL);
+            signal(SIGTSTP, SIG_DFL);
+            signal(SIGCONT, SIG_DFL);
+
+            std::vector<char*> argv;
+            for (auto& s : cmds[i])
+                argv.push_back(const_cast<char*>(s.c_str()));
+            argv.push_back(nullptr);
+
+            execvp(argv[0], argv.data());
+            perror("execvp");
+            _exit(1);
+        }
+        else {
+            if (i == 0)
+                pgid = pid;
+            setpgid(pid, pgid);
+        }
+    }
+
+    for (int fd : pipefds)
+        close(fd);
+
+    if (background) {
+        jobs_.push_back({ next_job_id_++, pgid,
+                           join_tokens(tokens), JobState::Running });
+        std::cout << "[" << jobs_.back().job_id << "] "
+                  << pgid << std::endl;
+    } else {
+        tcsetpgrp(STDIN_FILENO, pgid);
+        int status;
+        waitpid(-pgid, &status, WUNTRACED);
+        tcsetpgrp(STDIN_FILENO, shell_pgid);
+
+        if (WIFSTOPPED(status)) {
+            jobs_.push_back({ next_job_id_++, pgid,
+                               join_tokens(tokens), JobState::Stopped });
+            std::cout << "[" << jobs_.back().job_id
+                      << "] Stopped " << join_tokens(tokens) << std::endl;
+        }
+    }
+}
+
+
 
 void Shell::execute_line(const std::string &line) {
     auto tokens = split(line);
@@ -220,6 +347,14 @@ void Shell::execute_line(const std::string &line) {
         }
     }
 
+    bool has_pipe = false;
+    for (auto& t : tokens)
+        if (t == "|") has_pipe = true;
+    
+    if (has_pipe) {
+        execute_pipeline(tokens, background);
+        return;
+    }
 
     std::vector<char*> argv;
     for (auto& s : tokens)
