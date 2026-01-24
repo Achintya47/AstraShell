@@ -99,6 +99,11 @@ void Shell::run() {
 
     tcsetpgrp(STDIN_FILENO, shell_pgid);
 
+    // Ignore these for job control
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
+
     // Ignore interactive signals in the shell
     signal(SIGINT, SIG_IGN);
     signal(SIGTSTP, SIG_IGN);
