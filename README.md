@@ -75,27 +75,18 @@ make
 ./astra
 
 ### Not Yet Implemented
-
-I/O redirection (> < >> 2>)
-
-Environment variables (export, $VAR)
-
-Command history / line editing
-
-/proc-based memory awareness (planned)
-
-Scripting support
+- I/O redirection (> < >> 2>)
+- Environment variables (export, $VAR)
+- Command history / line editing
+- /proc-based memory awareness (planned)
+- Scripting support
 
 ### Motivation
 
 ASTRA Shell was built as a systems programming exercise to deeply understand:
-
-Unix process model
-
-Job control internals
-
-Terminal behavior
-
-Signal semantics
+- Unix process model
+- Job control internals
+- Terminal behavior
+- Signal semantics
 
 How real shells like bash actually work
