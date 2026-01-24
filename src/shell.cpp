@@ -82,7 +82,21 @@ void Shell::run() {
     // Shell must be its own Process Group
     shell_pgid = getpid();
     
+    // Assigns process pid to process group pgid
+    // pgid == 0, use pid as pgid, i.e this is the first process of that
+    // group
     setpgid(shell_pgid, shell_pgid);
+
+    // Terminal Control, given to a particular pgid
+    // Means : Send keyboard-generated signals to this PGID
+    // Why? Ctrl + C -> SIGINT, the kernel sends signals to foreground pgid
+    // Not to the complete shell, i.e Ctrl + C doesn't kill Astra now
+
+    // Terminal Behaviour : 
+    // Thus Shell Idle     : Shell PGID
+    //      Foreground Job : Job PGID
+    //      Background Job : No Terminal
+
     tcsetpgrp(STDIN_FILENO, shell_pgid);
 
     // Ignore interactive signals in the shell
@@ -152,17 +166,24 @@ void Shell::execute_line(const std::string &line) {
         return;
     }
 
+    // Bring a job to foreground, give terminal to job
+    // Resume job if stopped, wait for it and take terminal back
     if (tokens[0] == "fg") {
         int job_id = std::stoi(tokens[1].substr(1));
 
         for (auto it = jobs_.begin(); it != jobs_.end(); ++it) {
             if (it->job_id == job_id) {
+                // Terminal now sends singals to job
                 tcsetpgrp(STDIN_FILENO, it->pgid);
+                // -pgid -> signal entire process group, resume every process in the job
                 kill(-it->pgid, SIGCONT);
 
                 int status;
+                // Why use "-" sign? Syntactically it means, 'Wait for any member of this job'
+                // Wait for any process in the group, return if stopped (Ctrl + Z)
                 waitpid(-it->pgid, &status, WUNTRACED);
 
+                // Shell shall regain terminal ownership
                 tcsetpgrp(STDIN_FILENO, shell_pgid);
 
                 if (WIFSTOPPED(status)) {
@@ -173,9 +194,28 @@ void Shell::execute_line(const std::string &line) {
                 return;
             }
         }
-
-
     }
+
+    // Resume in Background, do Not give terminal to job, unlike fg
+    if (tokens[0] == "bg") {
+        
+        int job_id = std::stoi(tokens[1].substr(1));
+
+        for (auto& job : jobs_) {
+            if (job.job_id == job_id) {
+                // No tcsetpgrp(), so terminal stays with shell, job runs in background
+                kill(-job.pgid, SIGCONT);
+                job.state = JobState::Running;
+
+                std::cout << "[" << job.job_id << "] "
+                    << job.command << " &" << std::endl;
+                
+                return;
+            }
+        }
+    }
+
+
     std::vector<char*> argv;
     for (auto& s : tokens)
         argv.push_back(const_cast<char*>(s.c_str()));
@@ -191,11 +231,10 @@ void Shell::execute_line(const std::string &line) {
         return; 
     }
 
-
-    
     pid_t pid = fork();
 
     if (pid == 0) {
+        // new job, new group, this pgid == 0 if pid == 0
         setpgid(0, 0);
 
         signal(SIGINT, SIG_DFL);
@@ -215,6 +254,9 @@ void Shell::execute_line(const std::string &line) {
     }
 
     else if(pid > 0) {
+
+        // parent and child run concurrently, either may reach setpgid first
+        // calling in both places ensures correctness (parent and child)
 
         setpgid(pid, pid);
 
