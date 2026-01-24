@@ -56,13 +56,10 @@ ls | grep cpp | wc -l
 ```
 
 ### Build & Run
-Requirements
-
-Linux or WSL2
-
-C++17 compatible compiler
-
-POSIX environment
+Requirements : 
+- Linux or WSL2
+- C++17 compatible compiler
+- POSIX environment
 
 #### Build
 ```bash
