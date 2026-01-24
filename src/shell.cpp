@@ -80,7 +80,7 @@ void sigchld_handler(int) {
 void Shell::run() {
 
     // Shell must be its own Process Group
-    pid_t shell_pgid = getpid();
+    shell_pgid = getpid();
     
     setpgid(shell_pgid, shell_pgid);
     tcsetpgrp(STDIN_FILENO, shell_pgid);
@@ -155,16 +155,22 @@ void Shell::execute_line(const std::string &line) {
     if (tokens[0] == "fg") {
         int job_id = std::stoi(tokens[1].substr(1));
 
-        for (auto& job : jobs_) {
-            if (job.job_id == job_id) {
-                tcsetpgrp(STDIN_FILENO, job.pgid);
-                kill(-job.pgid, SIGCONT);
+        for (auto it = jobs_.begin(); it != jobs_.end(); ++it) {
+            if (it->job_id == job_id) {
+                tcsetpgrp(STDIN_FILENO, it->pgid);
+                kill(-it->pgid, SIGCONT);
 
                 int status;
-                waitpid(-job.pgid, &status, WUNTRACED);
+                waitpid(-it->pgid, &status, WUNTRACED);
 
                 tcsetpgrp(STDIN_FILENO, shell_pgid);
 
+                if (WIFSTOPPED(status)) {
+                    it->state = JobState::Stopped;
+                } else {
+                    jobs_.erase(it);
+                }
+                return;
             }
         }
 
@@ -242,8 +248,8 @@ void Shell::execute_line(const std::string &line) {
                 std::cout << "[" << jobs_.back().job_id
                     << "] Stopped " << line << std::endl;
             }
-            // Wait for entire process group
-            waitpid(pid, nullptr, 0);
+            // pid doesnot exist anymore
+            // waitpid(pid, nullptr, 0);
         }
     }
 
@@ -254,9 +260,9 @@ void Shell::execute_line(const std::string &line) {
 
 void Shell::check_background_jobs() {
     for (auto it = jobs_.begin(); it != jobs_.end(); ) {
-        pid_t pid = waitpid(it->pid, nullptr, WNOHANG);
+        pid_t result = waitpid(-it->pgid, nullptr, WNOHANG);
 
-        if (pid > 0) {
+        if (result > 0 && it->state == JobState::Running) {
             std::cout << "[" << it->job_id << "] Done  "
                       << it->command << std::endl;
             it = jobs_.erase(it);
