@@ -1,5 +1,6 @@
-# ASTRA Shell
 
+# ASTRA Shell
+### UNDER CONSTRUCTION
 ASTRA Shell is a **Linux-compatible Unix shell written in C++** that implements
 core POSIX shell features including **job control, signal handling, process groups,
 foreground/background execution, and pipelines**.
